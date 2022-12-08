@@ -25,6 +25,30 @@
 extern "C" {
 #endif
 
+#define CERTIFIER_ARRAY_LENGTH(a) (sizeof(a) / sizeof(*a))
+
+/**
+ * Extract an integer from a pointer, previously stored with INT_TO_POINTER.
+ * Only the lowest 32 bits are defined.
+ */
+#define CERTIFIER_POINTER_TO_INT(p) ((int) (long) (p))
+
+/**
+ * Extract an unsigned integer from a pointer, previously stored with INT_TO_POINTER.
+ * Only the lowest 32 bits are defined.
+ */
+#define CERTIFIER_POINTER_TO_UINT(p) ((unsigned int) (unsigned long) (p))
+
+/**
+ * Store an integer into a pointer. Only the lowest 32 bits are defined.
+ */
+#define CERTIFIER_INT_TO_POINTER(i) ((void *) (long) (i))
+
+/**
+ * Store an unsigned integer into a pointer. Only the lowest 32 bits are defined.
+ */
+#define CERTIFIER_UINT_TO_POINTER(i) ((void *) (unsigned long) (i))
+
 /**
  * Format an error message for the source location this is called at
  */
