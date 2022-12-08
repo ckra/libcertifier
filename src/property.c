@@ -58,7 +58,7 @@ const char *get_default_cfg_filename()
     static char glbl_cfg[] = DEFAULT_GLOBAL_CFG_FILENAME;
     char *cfg_order_list[] = { cfg, user_cfg, glbl_cfg };
 
-    for (int i = 0; i < sizeof(cfg_order_list) / sizeof(*cfg_order_list); ++i)
+    for (int i = 0; i < CERTIFIER_ARRAY_LENGTH(cfg_order_list); ++i)
     {
         if (util_file_exists(cfg_order_list[i])) {
             return cfg_order_list[i];
@@ -77,7 +77,7 @@ const char *get_default_ca_path()
 
     static char ca_filepath[256] = { 0 };
 
-    for (int i = 0; i < sizeof(ca_order_list) / sizeof(*ca_order_list); ++i)
+    for (int i = 0; i < CERTIFIER_ARRAY_LENGTH(ca_order_list); ++i)
     {
         size_t max_len = strlen(ca_order_list[i]) + strlen(DEFAULT_CA_INFO) + 2;
         if (max_len > sizeof(ca_filepath)) {
@@ -104,7 +104,7 @@ const char *get_default_ca_info()
     static char glbl_ca[] = DEFAULT_GLOBAL_CA_INFO;
     char *ca_order_list[] = { ca, user_ca, glbl_ca };
 
-    for (int i = 0; i < sizeof(ca_order_list) / sizeof(*ca_order_list); ++i)
+    for (int i = 0; i < CERTIFIER_ARRAY_LENGTH(ca_order_list); ++i)
     {
         if (util_file_exists(ca_order_list[i])) {
             return ca_order_list[i];
@@ -161,6 +161,38 @@ struct _PropMap {
     char *input_node;
     char *autorenew_certs_path_list;
 };
+
+struct bool_opt_entry {
+    CERTIFIER_OPT what;
+    CERTIFIER_OPT_OPTION bit;
+};
+
+static struct bool_opt_entry bool_table[] = {
+    { CERTIFIER_OPT_DEBUG_HTTP,             CERTIFIER_OPTION_DEBUG_HTTP },
+    { CERTIFIER_OPT_TRACE_HTTP,             CERTIFIER_OPTION_TRACE_HTTP },
+    { CERTIFIER_OPT_FORCE_REGISTRATION,     CERTIFIER_OPTION_FORCE_REGISTRATION},
+    { CERTIFIER_OPT_MEASURE_PERFORMANCE,    CERTIFIER_OPTION_MEASURE_PERFORMANCE },
+    { CERTIFIER_OPT_CERTIFICATE_LITE,       CERTIFIER_OPTION_CERTIFICATE_LITE }
+};
+
+static CERTIFIER_OPT_OPTION find_option(CERTIFIER_OPT name) {
+    CERTIFIER_OPT_OPTION opt = CERTIFIER_OPTION_NONE;
+
+    for (size_t i = 0; i < CERTIFIER_ARRAY_LENGTH(bool_table); i++) {
+        struct bool_opt_entry *entry = &bool_table[i];
+
+        if (entry->what == name) {
+            opt = entry->bit;
+            break;
+        }
+    }
+
+    if (opt == CERTIFIER_OPTION_NONE) {
+        log_warn("Boolean property [%d] not mapped");
+    }
+
+    return opt;
+}
 
 static void free_prop_map_values(CertifierPropMap *prop_map);
 
@@ -450,10 +482,16 @@ property_set(CertifierPropMap *prop_map, CERTIFIER_OPT name, const void *value) 
         case CERTIFIER_OPT_FORCE_REGISTRATION:
         case CERTIFIER_OPT_MEASURE_PERFORMANCE:
         case CERTIFIER_OPT_CERTIFICATE_LITE: {
-            unsigned int bit = name - CERTIFIER_OPT_BOOL_FIRST;
+            CERTIFIER_OPT_OPTION opt = find_option(name);
 
-            CERTIFIER_OPT_OPTION option = 1U << bit;
-            property_set_option(prop_map, option, value != 0);
+            if (opt != CERTIFIER_OPTION_NONE) {
+                property_set_option(prop_map, opt, value != 0);
+            }
+            else {
+                /* find_option will warn above */
+                retval = CERTIFIER_ERR_PROPERTY_SET_10;
+            }
+
             break;
         }
 
@@ -641,10 +679,15 @@ property_get(CertifierPropMap *prop_map, CERTIFIER_OPT name) {
         case CERTIFIER_OPT_FORCE_REGISTRATION:
         case CERTIFIER_OPT_MEASURE_PERFORMANCE:
         case CERTIFIER_OPT_CERTIFICATE_LITE: {
-            unsigned int bit = name - CERTIFIER_OPT_BOOL_FIRST;
+            CERTIFIER_OPT_OPTION opt = find_option(name);
 
-            CERTIFIER_OPT_OPTION option = 1U << bit;
-            retval = (void *) property_is_option_set(prop_map, option);
+            if (opt != CERTIFIER_OPTION_NONE)
+            {
+                retval = CERTIFIER_INT_TO_POINTER(property_is_option_set);
+            }
+
+            /* find_option will warn above, but interface can't discriminate a false from an error */
+
             break;
         }
 
