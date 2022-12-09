@@ -65,7 +65,7 @@ const char *get_default_cfg_filename()
         }
     }
 
-    return NULL;
+    return "";
 }
 
 const char *get_default_ca_path()
