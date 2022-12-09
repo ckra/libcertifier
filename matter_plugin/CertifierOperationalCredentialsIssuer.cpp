@@ -29,16 +29,18 @@
 #include <lib/support/CodeUtils.h>
 #include <lib/support/ScopedBuffer.h>
 #include <lib/support/TestGroupData.h>
+#include <lib/support/Base64.h>
 
-#include <chrono>
 #include <memory>
+#include <string>
+#include <cinttypes>
+#include <iostream>
+#include <iomanip>
 
-#include <certifier/base64.h>
 #include <certifier/certifier_api_easy.h>
 #include <certifier/certifier_api_easy_internal.h>
 #include <certifier/certifier_internal.h>
 #include <certifier/http.h>
-#include <certifier/parson.h>
 #include <certifier/util.h>
 #include <certifier/security.h>
 #include <certifier/types.h>
@@ -73,7 +75,7 @@ CHIP_ERROR CertifierOperationalCredentialsIssuer::GenerateNOCChainAfterValidatio
     uint8_t OpCertificateChain[4096];
     MutableByteSpan OpCertificateChainSpan(OpCertificateChain);
 
-    SuccessOrExit(error = ObtainOpCert(dac, csr, nonce, OpCertificateChainSpan, nodeId));
+    SuccessOrExit(error = ObtainOpCert(dac, csr, nonce, OpCertificateChainSpan, fabricId, nodeId));
 
     OpCertificateChain[OpCertificateChainSpan.size()] = 0;
     util_trim(reinterpret_cast<char *>(OpCertificateChain));
@@ -185,215 +187,94 @@ CHIP_ERROR CertifierOperationalCredentialsIssuer::ObtainCsrNonce(MutableByteSpan
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR CertifierOperationalCredentialsIssuer::SetAuthCertificate(const char * authCertPath, size_t len)
-{
-    VerifyOrReturnError(len < sizeof(mAuthCertificate), CHIP_ERROR_INVALID_ARGUMENT);
-    strncpy(mAuthCertificate, authCertPath, len);
-    return CHIP_NO_ERROR;
-}
-
 CHIP_ERROR CertifierOperationalCredentialsIssuer::SetCertConfig(const char * certCfgPath, size_t len)
 {
-    VerifyOrReturnError(len < sizeof(mCertifierCfg), CHIP_ERROR_INVALID_ARGUMENT);
-    strncpy(mCertifierCfg, certCfgPath, len);
+    mCertifierCfg = std::string(certCfgPath, len);
     return CHIP_NO_ERROR;
 }
 
-void CertifierOperationalCredentialsIssuer::GetTimestampForCertifying()
+CHIP_ERROR CertifierOperationalCredentialsIssuer::SetKeystorePath(const std::string &keystorePath)
 {
-    using namespace std::chrono;
-    int64_t ms = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-    sprintf(mTimestamp, "%" PRId64, ms);
+    mCertifierKeystore = keystorePath;
+    return CHIP_NO_ERROR;
 }
 
-http_response * CertifierOperationalCredentialsIssuer::DoHttpExchange(uint8_t * buffer, CERTIFIER * certifier)
+CHIP_ERROR CertifierOperationalCredentialsIssuer::SetKeystorePassphrase(const std::string &passphrase)
 {
-    static char auth_header[VERY_LARGE_STRING_SIZE * 4] = "";
-    static char tracking_header[LARGE_STRING_SIZE]      = "";
-    static char source_header[SMALL_STRING_SIZE]        = "";
-    const char * tracking_id  = reinterpret_cast<const char *>(certifier_api_easy_get_opt(mCertifier, CERTIFIER_OPT_TRACKING_ID));
-    const char * bearer_token = reinterpret_cast<const char *>(certifier_api_easy_get_opt(mCertifier, CERTIFIER_OPT_CRT));
-    const char * source       = reinterpret_cast<const char *>(certifier_api_easy_get_opt(mCertifier, CERTIFIER_OPT_SOURCE));
-    const char * certifier_url =
-        reinterpret_cast<const char *>(certifier_api_easy_get_opt(mCertifier, CERTIFIER_OPT_CERTIFIER_URL));
-
-    char certifier_certificate_url[256];
-    char certificate_url[] = "/certificate";
-    strncpy(certifier_certificate_url, certifier_url, sizeof(certifier_certificate_url));
-    strncpy(certifier_certificate_url + strlen(certifier_url), certificate_url, sizeof(certifier_certificate_url) - strlen(certifier_url));
-
-    if (bearer_token != nullptr)
-    {
-        snprintf(auth_header, VERY_LARGE_STRING_SIZE * 4, "Authorization: Bearer %s", bearer_token);
-    }
-    snprintf(tracking_header, SMALL_STRING_SIZE, "x-xpki-tracking-id: %s", tracking_id);
-    snprintf(source_header, SMALL_STRING_SIZE, "x-xpki-source: %s", source);
-
-    const char * headers[] = { "Accept: application/json",
-                               "Content-Type: application/json; charset=utf-8",
-                               auth_header,
-                               tracking_header,
-                               source_header,
-                               nullptr };
-    return certifier_api_easy_http_post(certifier, certifier_certificate_url, headers, (const char *) (buffer));
+    mCertifierPassphrase = passphrase;
+    return CHIP_NO_ERROR;
 }
 
 CHIP_ERROR CertifierOperationalCredentialsIssuer::ObtainOpCert(const ByteSpan & dac, const ByteSpan & csr, const ByteSpan & nonce,
-                                                               MutableByteSpan & pkcs7OpCert, NodeId nodeId)
+                                                               MutableByteSpan & pkcs7OpCert, FabricId fabricId, NodeId nodeId)
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
 
-    JSON_Value * root_value   = json_value_init_object();
-    JSON_Object * root_object = json_value_get_object(root_value);
-
-    size_t base64CertificateLength = static_cast<size_t>(base64_encode_len(static_cast<int>(dac.size()) + 2));
-    size_t base64CSRLength         = static_cast<size_t>(base64_encode_len(static_cast<int>(csr.size()))) + 1;
-    Platform::ScopedMemoryBuffer<char> base64Certificate;
-    Platform::ScopedMemoryBuffer<char> base64JsonCrt;
     Platform::ScopedMemoryBuffer<char> base64CSR;
-    Platform::ScopedMemoryBuffer<char> base64Signature;
-    int base64SignatureLength;
+    base64CSR.Alloc(BASE64_ENCODED_LEN(static_cast<uint32_t>(csr.size())));
+    std::string operationalID = "XFN-MTR";
+    std::string crt;
+    std::string pkcs7;
+    std::string nodeIdStr = ToHexString<NodeId>(nodeId);
+    std::string fabricIdStr = ToHexString<FabricId>(fabricId);
+    std::unique_ptr<CERTIFIER, void (*)(CERTIFIER *)> cert_guard { certifier_api_easy_new(), certifier_api_easy_destroy };
+    CERTIFIER *certifier = cert_guard.get();
 
-    uint8_t derSignature[kMax_ECDSA_Signature_Length_Der];
-    MutableByteSpan derSignatureSpan(derSignature);
+    uint32_t base64CSRLen = Base64Encode32(csr.data(), static_cast<uint32_t>(csr.size()), base64CSR.Get());
+    VerifyOrExit(base64CSRLen != UINT32_MAX, err = CHIP_ERROR_INTERNAL);
 
-    char * jsonCSR = nullptr;
-    char operationalID[] = "XFN-MTR";
-    char nodeIdArray[17];
-
-    http_response * resp                = nullptr;
-    const char * OpCertificateChainTemp = nullptr;
-
-    char * mJsonCrt = nullptr;
-
-    size_t pkcs7OpCertBufLen = 0;
-
-    int result = 0;
-
-    char nullTerminatedNonce[kAttestationNonceLength + 1];
-
-    VerifyOrExit(base64Certificate.Alloc(base64CertificateLength), err = CHIP_ERROR_NO_MEMORY);
-    VerifyOrExit(base64CSR.Alloc(base64CSRLength), err = CHIP_ERROR_NO_MEMORY);
-
-    memset(nodeIdArray, 0, sizeof(nodeIdArray));
-    snprintf(nodeIdArray, sizeof(nodeIdArray), "%016" PRIX64, nodeId);
-
-    json_object_set_string(root_object, "tokenType", cert_id);
-    base64_encode(base64Certificate.Get(), dac.data(), static_cast<int>(dac.size()));
-    result = json_object_set_string(root_object, "certificate", base64Certificate.Get());
-    VerifyOrExit(result == 0, err = CHIP_ERROR_INTERNAL);
-    GetTimestampForCertifying();
-    result = json_object_set_string(root_object, "timestamp", mTimestamp);
-    VerifyOrExit(result == 0, err = CHIP_ERROR_INTERNAL);
-    VerifyOrExit(nonce.size() <= sizeof(nullTerminatedNonce) - 1, err = CHIP_ERROR_INVALID_ARGUMENT);
-    memcpy(nullTerminatedNonce, nonce.data(), nonce.size());
-    nullTerminatedNonce[nonce.size()] = '\0';
-    result                            = json_object_set_string(root_object, "nonce", nullTerminatedNonce);
-    VerifyOrExit(result == 0, err = CHIP_ERROR_INTERNAL);
-
-    {
-        Platform::ScopedMemoryBuffer<uint8_t> tbsData;
-        ByteSpan tbsSpan;
-        size_t tbsDataLen = dac.size() + strlen(mTimestamp) + nonce.size() + strlen(cert_id);
-        P256ECDSASignature signature;
-        MutableByteSpan signatureSpan(signature, signature.Capacity());
-
-        DeviceAttestationCredentialsProvider * dacProvider = GetDeviceAttestationCredentialsProvider();
-
-        VerifyOrExit(tbsData.Alloc(tbsDataLen), err = CHIP_ERROR_NO_MEMORY);
-
-        XMEMCPY(tbsData.Get(), dac.data(), dac.size());
-        XMEMCPY(tbsData.Get() + dac.size(), mTimestamp, strlen(mTimestamp));
-        XMEMCPY(tbsData.Get() + dac.size() + strlen(mTimestamp), nonce.data(), nonce.size());
-        XMEMCPY(tbsData.Get() + dac.size() + strlen(mTimestamp) + nonce.size(), cert_id, strlen(cert_id));
-
-        tbsSpan = ByteSpan { tbsData.Get(), tbsDataLen };
-
-        SuccessOrExit(err = dacProvider->SignWithDeviceAttestationKey(tbsSpan, signatureSpan));
-        SuccessOrExit(err = signature.SetLength(signatureSpan.size()));
-
-        SuccessOrExit(err = EcdsaRawSignatureToAsn1(kMAX_FE_Length, signatureSpan, derSignatureSpan));
+    // Always load configuration first, as Matter "owns" the set below.
+    if (!mCertifierCfg.empty()) {
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CFG_FILENAME, const_cast<char *>(mCertifierCfg.c_str()));
     }
 
-    base64SignatureLength = base64_encode_len(static_cast<int>(derSignatureSpan.size()));
-    VerifyOrExit(base64Signature.Alloc(static_cast<size_t>(base64SignatureLength + 6)), err = CHIP_ERROR_NO_MEMORY);
-    base64_encode(base64Signature.Get(), derSignatureSpan.data(), static_cast<int>(derSignatureSpan.size()));
-    result = json_object_set_string(root_object, "signature", base64Signature.Get());
-    VerifyOrExit(result == 0, err = CHIP_ERROR_INTERNAL);
-
-    mJsonCrt = json_serialize_to_string_pretty(root_value);
-    ChipLogProgress(AppServer, "X509 JSON certificate for obtaining operational credentials: \n%s", mJsonCrt);
-    VerifyOrExit(base64JsonCrt.Alloc(static_cast<size_t>(base64_encode_len(static_cast<int>(strlen(mJsonCrt))))),
-                 err = CHIP_ERROR_NO_MEMORY);
-    base64_encode(base64JsonCrt.Get(), reinterpret_cast<const unsigned char *>(mJsonCrt), static_cast<int>(strlen(mJsonCrt)));
-    mCertifier = certifier_api_easy_new();
-    certifier_api_easy_set_opt(mCertifier, CERTIFIER_OPT_CFG_FILENAME, reinterpret_cast<void *>(mCertifierCfg));
-    certifier_api_easy_set_opt(mCertifier, CERTIFIER_OPT_CRT, base64JsonCrt.Get());
-    certifier_api_easy_set_opt(mCertifier, CERTIFIER_OPT_CN_PREFIX, operationalID);
-    certifier_api_easy_set_opt(mCertifier, CERTIFIER_OPT_NODE_ID, nodeIdArray);
-
-    base64_encode(base64CSR.Get(), reinterpret_cast<const unsigned char *>(csr.data()), static_cast<int>(csr.size()));
-    if (!(certifier_api_easy_create_json_csr(mCertifier, reinterpret_cast<unsigned char *>(base64CSR.Get()), (char *) operationalID,
-                                             &jsonCSR)))
-    {
-        ChipLogError(AppServer, "kProtocol_OpCredentials Error creating JSON CSR.");
-        SuccessOrExit(err);
-    }
-    ChipLogProgress(AppServer, "CSR for: \n%s", jsonCSR);
-
-    certifier_api_easy_set_opt(mCertifier, CERTIFIER_OPT_CA_INFO, reinterpret_cast<void *>(mAuthCertificate));
-
-    ChipLogProgress(AppServer, "kProtocol_OpCredentials Obtaining operational credentials.");
-    if (nullptr == (resp = DoHttpExchange(reinterpret_cast<uint8_t *>(jsonCSR), mCertifier)))
-    {
-        ChipLogError(AppServer, "kProtocol_OpCredentials Error obtaining HTTP response.");
-        err = CHIP_ERROR_STATUS_REPORT_RECEIVED;
-        SuccessOrExit(err);
-    }
-    if ((resp->error != 0) || (resp->payload == nullptr))
-    {
-        ChipLogError(AppServer, "kProtocol_OpCredentials Error in HTTP response:\n%s",
-                     util_format_curl_error("certifiercommissioner_request_x509_certificate", resp->http_code, resp->error,
-                                            resp->error_msg, resp->payload, __FILE__, __LINE__));
-        err = CHIP_ERROR_STATUS_REPORT_RECEIVED;
-        SuccessOrExit(err);
+    // This and passphrase are only relevant for CRT generation below.
+    if (!mCertifierKeystore.empty()) { 
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_INPUT_P12_PATH, const_cast<char *>(mCertifierKeystore.c_str()));
+        // certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_OUTPUT_P12_PATH, const_cast<char *>(mCertifierKeystore.c_str()));
     }
 
-    json_value_free(root_value);
-    if (json_value_get_type(root_value = json_parse_string_with_comments(resp->payload)) != JSONObject)
-    {
-        ChipLogError(AppServer, "kProtocol_OpCredentials Error parsing HTTP response JSON.\n%s",
-                     util_format_curl_error("certifiercommissioner_request_x509_certificate", resp->http_code, resp->error,
-                                            "Could not parse JSON.  Expected it to be an array.", resp->payload, __FILE__,
-                                            __LINE__));
-        SuccessOrExit(err);
+    if (!mCertifierPassphrase.empty()) {
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_INPUT_P12_PASSWORD, const_cast<char *>(mCertifierPassphrase.c_str()));
+        // certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_OUTPUT_P12_PASSWORD, const_cast<char *>(mCertifierPassphrase.c_str()));
     }
 
-    if (nullptr == (root_object = json_value_get_object(root_value)))
-    {
-        ChipLogError(AppServer, "kProtocol_OpCredentials Error parsing HTTP response JSON object.\n%s",
-                     util_format_curl_error("certifiercommissioner_request_x509_certificate", resp->http_code, resp->error,
-                                            "Could not parse JSON.  parsed_json_object_value is NULL!.", resp->payload, __FILE__,
-                                            __LINE__));
-        SuccessOrExit(err);
+    if (!mAuthCertificate.empty()) {
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CA_INFO, const_cast<char *>(mAuthCertificate.c_str()));
     }
 
-    if (nullptr == (OpCertificateChainTemp = (json_object_get_string(root_object, "certificateChain"))))
-    {
-        ChipLogError(AppServer, "kProtocol_OpCredentials Error obtaining certificate chain from HTTP response JSON.\n%s",
-                     util_format_curl_error("certifiercommissioner_request_x509_certificate", resp->http_code, resp->error,
-                                            "Could not parse JSON.  certificate_chain is NULL!", resp->payload, __FILE__,
-                                            __LINE__));
-        SuccessOrExit(err);
+    if (!mAuthCertificatesDir.empty()) {
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CA_PATH, const_cast<char *>(mAuthCertificatesDir.c_str()));
     }
 
-    pkcs7OpCertBufLen = strlen(OpCertificateChainTemp);
-    VerifyOrReturnError(pkcs7OpCert.size() > pkcs7OpCertBufLen, CHIP_ERROR_BUFFER_TOO_SMALL);
-    memcpy(pkcs7OpCert.data(), OpCertificateChainTemp, pkcs7OpCertBufLen);
-    pkcs7OpCert.reduce_size(pkcs7OpCertBufLen);
+    if (!mCertifierProfile.empty()) {
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_PROFILE_NAME, const_cast<char *>(mCertifierProfile.c_str()));
+    }
 
+    ChipLogProgress(Controller, "Generating Certificate Request Token");
+
+    certifier_api_easy_set_mode(certifier, CERTIFIER_MODE_CREATE_CRT);
+    VerifyOrExit(certifier_api_easy_perform(certifier) == 0, err = CHIP_ERROR_INTERNAL);
+    crt = std::string(certifier_api_easy_get_result(certifier));
+
+    ChipLogProgress(Controller, "Requesting certificate for Fabric ID %s, Node ID %s", fabricIdStr.c_str(), nodeIdStr.c_str());
+    
+    certifier_api_easy_set_mode(certifier, CERTIFIER_MODE_REGISTER);
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CRT, const_cast<char *>(crt.c_str()));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CERTIFICATE_LITE, CERTIFIER_INT_TO_POINTER(true));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CN_PREFIX, const_cast<char *>(operationalID.c_str()));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_NODE_ID, const_cast<char *>(nodeIdStr.c_str()));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_PASSTHRU, CERTIFIER_INT_TO_POINTER(true));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_CSR, const_cast<char *>(std::string(base64CSR.Get(), base64CSRLen).c_str()));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_FABRIC_ID, const_cast<char *>(fabricIdStr.c_str()));
+    certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_VALIDITY_DAYS, CERTIFIER_INT_TO_POINTER(15 * 365));
+    VerifyOrExit(certifier_api_easy_perform(certifier) == 0, err = CHIP_ERROR_INTERNAL);
+
+    pkcs7 = std::string(certifier_api_easy_get_result(certifier));
+    VerifyOrReturnError(pkcs7OpCert.size() >= pkcs7.length(), CHIP_ERROR_BUFFER_TOO_SMALL);
+    memcpy(pkcs7OpCert.data(), pkcs7.data(), pkcs7.length());
+    pkcs7OpCert.reduce_size(pkcs7.length());
 exit:
-    json_value_free(root_value);
     return err;
 }
 

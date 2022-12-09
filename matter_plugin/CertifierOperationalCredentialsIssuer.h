@@ -22,9 +22,11 @@
 #include <crypto/CHIPCryptoPAL.h>
 #include <lib/core/PeerId.h>
 #include <lib/support/DLLUtil.h>
+#include <string>
+#include <iostream>
+#include <iomanip>
 
 struct CERTIFIER;
-struct http_response;
 
 namespace chip {
 namespace Controller {
@@ -47,22 +49,130 @@ public:
                                                const ByteSpan & nonce, MutableByteSpan & rcac, MutableByteSpan & icac,
                                                MutableByteSpan & noc);
 
-    CHIP_ERROR SetAuthCertificate(const char * authCertPath, size_t len);
+    /**
+     * @brief Set the xpki.io trust anchor (single root)
+     * 
+     * @param authCertPath 
+     * @param len 
+     * @note this will override any JSON configuration, if set.
+     * @return CHIP_ERROR This operation is always successful.
+     */
+
+    void SetAuthCertificate(const std::string &authCertPath)
+    {
+        mAuthCertificate = authCertPath;
+    }
+
+    /**
+     * @brief Set the xpki.io trust anchors (directory of roots)
+     *
+     * @param authCertPath A path to a directory containing trust anchors to accept
+     * @note This will override any JSON configuration, if set.
+     * @return CHIP_ERROR This operation is always successful.
+     */
+    void SetAuthCertPath(const std::string &authCertPath)
+    {
+        mAuthCertificatesDir = authCertPath;
+    }
+
+    /**
+     * @brief Set the xPKI CA name
+     * @ref https://etwiki.sys.comcast.net/display/SATS/Profiles
+     * 
+     * @param caName 
+     */
+    void SetCAProfile(const std::string &caName)
+    {
+        mCertifierProfile = caName;
+    }
+
+    /**
+     * @brief Set the libcertifier JSON configuration path. This should normally
+     * be unset.
+     * 
+     * @param certCfgPath 
+     * @param len 
+     * @return CHIP_ERROR 
+     */
     CHIP_ERROR SetCertConfig(const char * certCfgPath, size_t len);
+
+    /**
+     * @brief Set the path to the libcertifier system keystore. Default is <pwd>/libcertifier.p12
+     * @note if set, this overrides any previously loaded JSON configuration
+     * @param keystorePath 
+     * @return CHIP_ERROR 
+     */
+    CHIP_ERROR SetKeystorePath(const std::string &keystorePath);
+
+    /**
+     * @brief Set the passphrase to unlock the libcertifier system keystore.
+     * @note if set, this overrides any previously loaded JSON configuration
+     * @param passphrase 
+     * @return CHIP_ERROR 
+     */
+    CHIP_ERROR SetKeystorePassphrase(const std::string &passphrase);
 
 private:
     NodeId mNodeId;
     FabricId mFabricId;
 
-    CERTIFIER * mCertifier     = nullptr;
-    char mAuthCertificate[256] = "libcertifier-cert.crt";
-    char mCertifierCfg[256]    = "libcertifier.cfg";
-    char mTimestamp[21]        = "";
+    /**
+     * @brief Single trust anchor for xPKI (certifier.xpki.io) https
+     * peer validation
+     */
+    std::string mAuthCertificate;
 
-    void GetTimestampForCertifying();
-    http_response * DoHttpExchange(uint8_t * buffer, CERTIFIER * certifier);
+    /**
+     * @brief Directory containing trust anchors for xPKI (certifier.xpki.io) https
+     * peer validation
+     * 
+     */
+    std::string mAuthCertificatesDir;
+
+    /**
+     * @brief Path to JSON libcertifier configuration file
+     * 
+     */
+    std::string mCertifierCfg;
+
+    /**
+     * @brief Path to PKCS#12 libcertifier keystore. This will store the commissioner's
+     * Node Operational Certificate
+     */
+    std::string mCertifierKeystore = "seed.p12";
+
+    /**
+     * @brief Passphrase to open libcertifier keystore
+     * 
+     */
+    std::string mCertifierPassphrase = "changeit";
+
+    /**
+     * @brief The Matter CA to request certificates from
+     */
+    std::string mCertifierProfile = "XFN_Matter_OP_Class_3_ICA";
+
+    /**
+     * @brief Makes a string that represents a number in hex, with leading zeroes.
+     * 
+     * @tparam T A numeric type (int, uint64_t, ...)
+     * @param number
+     * @return std::string 
+     * //TODO: Use c++20 'concept' to constrain T to numeric.
+     */
+    template<typename T>
+    inline std::string ToHexString(T number)
+    {
+        std::stringstream os;
+        
+        // Matter requires uppercase hex for ID attributes; xPKI wants no radix indicator (0x).
+        os << std::uppercase << std::hex << std::setfill('0') << std::setw(sizeof(T)*2) << std::right << number;
+
+        return os.str();
+    }
+
     CHIP_ERROR ObtainOpCert(const ByteSpan & dac, const ByteSpan & csr, const ByteSpan & nonce, MutableByteSpan & pkcs7OpCert,
-                            NodeId nodeId);
+                            FabricId fabricId, NodeId nodeId);
 };
 
 } // namespace Controller
