@@ -152,9 +152,12 @@ certifier_destroy(Certifier *certifier);
  * Register a device or application
  * @param certifier
  * @param mode
+ * @param pkcsOut Provide a pointer recieve certificate chain in 
+ *                PKCS#7 (Cryptographic Message Syntax). The caller
+ *                is responsible for freeing it when finished.
  * @return
  */
-int certifier_register(Certifier *certifier);
+int certifier_register(Certifier *certifier, char **pkcs7Out);
 
 int
 certifier_set_property(Certifier *certifier, int name, const void *value);

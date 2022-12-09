@@ -1063,7 +1063,7 @@ static void free_tmp(Certifier *certifier) {
     XMEMSET(&certifier->tmp_map, 0, sizeof(certifier->tmp_map));
 }
 
-int certifier_register(Certifier *certifier) {
+int certifier_register(Certifier *certifier, char **pkcs7Out) {
     NULL_CHECK(certifier);
 
     int return_code = 0;
@@ -1076,6 +1076,7 @@ int certifier_register(Certifier *certifier) {
 
     int force_registration = 0;
 
+    bool passthru = certifier_is_option_set(certifier, CERTIFIER_OPTION_PASSTHRU);
     const char *p12_filename = certifier_get_property(certifier, CERTIFIER_OPT_INPUT_P12_PATH);
 
     double start_user_cpu_time = 0, end_user_cpu_time = 0;
@@ -1106,38 +1107,40 @@ int certifier_register(Certifier *certifier) {
 
     log_info("P12 filename is: %s", p12_filename);
 
-    // Check to see if the P12 file already exists.  If it does AND the force_registration flag was set
-    // then, we will rename the existing .p12 file.  If, for some reason, the renamed file existed, like
-    // from a leftover incomplete registration, or the file permission was not set right, try to
-    // delete that file.
-    if (util_file_exists(p12_filename)) {
-        if (force_registration) {
-            renamed_p12_filename = util_format_str("%s.bk", p12_filename);
+    if (!passthru) {
+        // Check to see if the P12 file already exists.  If it does AND the force_registration flag was set
+        // then, we will rename the existing .p12 file.  If, for some reason, the renamed file existed, like
+        // from a leftover incomplete registration, or the file permission was not set right, try to
+        // delete that file.
+        if (util_file_exists(p12_filename)) {
+            if (force_registration) {
+                renamed_p12_filename = util_format_str("%s.bk", p12_filename);
 
-            if (util_file_exists(renamed_p12_filename)) {
-                if (util_delete_file(renamed_p12_filename)) {
-                    return_code = CERTIFIER_ERR_REGISTER_DELETE_PKCS12_1;
+                if (util_file_exists(renamed_p12_filename)) {
+                    if (util_delete_file(renamed_p12_filename)) {
+                        return_code = CERTIFIER_ERR_REGISTER_DELETE_PKCS12_1;
+                        char *err_json = util_format_error("certifier_register_device",
+                                                        "Error trying to delete a renamed PKCS12 file [1]", __FILE__,
+                                                        __LINE__);
+                        set_last_error(certifier, return_code, err_json);
+                        goto cleanup;
+                    }
+                }
+
+                if (util_rename_file(p12_filename, renamed_p12_filename)) {
+                    return_code = CERTIFIER_ERR_REGISTER_RENAME_PKCS12_1;
                     char *err_json = util_format_error("certifier_register_device",
-                                                    "Error trying to delete a renamed PKCS12 file [1]", __FILE__,
+                                                    "Error trying to delete a renamed PKCS12 file [1].", __FILE__,
                                                     __LINE__);
                     set_last_error(certifier, return_code, err_json);
                     goto cleanup;
                 }
-            }
 
-            if (util_rename_file(p12_filename, renamed_p12_filename)) {
-                return_code = CERTIFIER_ERR_REGISTER_RENAME_PKCS12_1;
-                char *err_json = util_format_error("certifier_register_device",
-                                                "Error trying to delete a renamed PKCS12 file [1].", __FILE__,
-                                                __LINE__);
-                set_last_error(certifier, return_code, err_json);
+                log_info("Renamed file: %s to %s", p12_filename, renamed_p12_filename);
+            } else {
+                log_info("\nCertificate already exists. Returning. No need to register again.\n");
                 goto cleanup;
             }
-
-            log_info("Renamed file: %s to %s", p12_filename, renamed_p12_filename);
-        } else {
-            log_info("\nCertificate already exists. Returning. No need to register again.\n");
-            goto cleanup;
         }
     }
 
@@ -1150,21 +1153,33 @@ int certifier_register(Certifier *certifier) {
         goto cleanup;
     }
 
-    // Create the Certificate Signing Request
-    log_info("\nCreating Certificate Signing Request...\n");
-    csr_byte_ptr = security_generate_certificate_signing_request(certifier->tmp_map.private_ec_key, &csr_len);
+    if (passthru) { 
+        const char *tmp = property_get(certifier->prop_map, CERTIFIER_OPT_CSR);
+        csr_len = 0;
+
+        if (tmp != NULL) {
+            csr_byte_ptr = strdup(tmp);
+        }
+
+        if (csr_byte_ptr != NULL) {
+            csr_len = strlen(csr_byte_ptr);
+        }
+    } else {
+        log_info("\nCreating Certificate Signing Request...\n");
+        csr_byte_ptr = security_generate_certificate_signing_request(certifier->tmp_map.private_ec_key, &csr_len);
+    }
+
     if (csr_len && csr_byte_ptr) {
         log_debug("\nGot a valid Certificate Signing Request.");
         log_debug("\nCertificate Signing Request: %s\n", csr_byte_ptr);
     } else {
         return_code = CERTIFIER_ERR_REGISTER_SECURITY_1;
         char *err_json = util_format_error("certifier_register_device",
-                                           "Internal error.  Failed to Generate Certificate Signing Request!.",
-                                           __FILE__, __LINE__);
+                                        "Internal error.  Failed to Generate Certificate Signing Request!.",
+                                        __FILE__, __LINE__);
         set_last_error(certifier, return_code, err_json);
         goto cleanup;
     }
-
 
     // Register Client with CA Authority
     log_info("\nRegistering Client...\n");
@@ -1182,20 +1197,26 @@ int certifier_register(Certifier *certifier) {
         goto cleanup;
     } else {
         log_info("\nObtained x509 Certificate Successfully!\n");
+        
+        if (pkcs7Out != NULL) {
+            *pkcs7Out = strdup(x509_certs);
+        }
     }
 
-    save_x509certs_to_filesystem(certifier, x509_certs, force_registration, p12_filename);
+    if (!passthru) { 
+        save_x509certs_to_filesystem(certifier, x509_certs, force_registration, p12_filename);
 
-    // delete the Renamed file if it exists
-    if (util_file_exists(renamed_p12_filename)) {
-        if (util_delete_file(renamed_p12_filename)) {
-            return_code = CERTIFIER_ERR_REGISTER_DELETE_PKCS12_2;
-            char *err_json = util_format_error("certifier_register",
-                                               "Error trying to delete a renamed PKCS12 file [2].",
-                                               __FILE__,
-                                               __LINE__);
-            set_last_error(certifier, return_code, err_json);
-            goto cleanup;
+        // delete the Renamed file if it exists
+        if (util_file_exists(renamed_p12_filename)) {
+            if (util_delete_file(renamed_p12_filename)) {
+                return_code = CERTIFIER_ERR_REGISTER_DELETE_PKCS12_2;
+                char *err_json = util_format_error("certifier_register",
+                                                "Error trying to delete a renamed PKCS12 file [2].",
+                                                __FILE__,
+                                                __LINE__);
+                set_last_error(certifier, return_code, err_json);
+                goto cleanup;
+            }
         }
     }
 
@@ -1255,15 +1276,12 @@ int certifier_register(Certifier *certifier) {
     XFREE(renamed_p12_filename);
 
     return return_code;
-} /* certifier_register */
-    
+}
 
 CertifierPropMap *certifier_easy_api_get_props(Certifier *certifier)
 {
     return (certifier->prop_map);
 }
-
-
 
 void certifier_easy_api_get_node_address(Certifier *certifier, char *node_address)
 {
