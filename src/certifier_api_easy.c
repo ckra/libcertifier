@@ -1062,7 +1062,8 @@ int certifier_api_easy_perform(CERTIFIER *easy) {
 
     password = certifier_get_property(easy->certifier, CERTIFIER_OPT_INPUT_P12_PASSWORD);
     if (util_is_empty(password)) {
-        return_code = certifier_set_property(easy->certifier, CERTIFIER_OPT_INPUT_P12_PASSWORD, DEFAULT_PASSWORD);
+        password = DEFAULT_PASSWORD;
+        return_code = certifier_set_property(easy->certifier, CERTIFIER_OPT_INPUT_P12_PASSWORD, password);
         if (return_code != 0) {
             log_error("Received return_code: <%i> while setting default CERTIFIER_OPT_INPUT_P12_PASSWORD.  Exiting.",
                       return_code);
