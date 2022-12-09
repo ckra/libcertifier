@@ -505,7 +505,8 @@ static int do_registration(CERTIFIER *easy) {
     const char *certifier_id = NULL;
 
     log_info("Calling certifier_register_device()");
-    return_code = certifier_register(easy->certifier);
+    char *pkcs7 = NULL;
+    return_code = certifier_register(easy->certifier, &pkcs7);
 
     if (return_code != 0) {
         log_error("Received an error code: <%i> while calling certifier_register_device().  Exiting.",
@@ -521,7 +522,12 @@ static int do_registration(CERTIFIER *easy) {
         }
         log_info("The device has been registered!  Node ID is: %s", certifier_id);
     }
-    finish_operation(easy, return_code, certifier_id);
+
+    bool passthru = certifier_is_option_set(easy->certifier, CERTIFIER_OPTION_PASSTHRU);
+
+    finish_operation(easy, return_code, passthru ? pkcs7 : certifier_id);
+    free(pkcs7);
+    pkcs7 = NULL;
     return return_code;
 }
 
@@ -1154,6 +1160,7 @@ int certifier_api_easy_perform(CERTIFIER *easy) {
         case CERTIFIER_MODE_PRINT_CERT:
             do_print_cert(easy);
             break;
+
 
         default:
             finish_operation(easy, -1, "Invalid mode");

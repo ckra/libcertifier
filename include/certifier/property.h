@@ -179,16 +179,34 @@ typedef enum CERTIFIER_OPT
          * @note value type: string
          */
         CERTIFIER_OPT_AUTORENEW_CERTS_PATH_LIST,
+    
+        /**
+         * @brief When set, registration operations will *not* load/store credentials
+         *        from the 'system' keystore, and, on successful registration,
+         *        certificate chains will be available in certifier_create_info as PKCS#7 CMS data
+         * @see CERTIFIER_OPT_CSR
+         * @note value type: bool
+         */
+        CERTIFIER_OPT_PASSTHRU,
+         
+        /**
+         * @brief CSR to sign in PASSTHRU mode
+         * @note value type: cstring (base64 encoded DER)
+         * @see CERTIFIER_OPT_PASSTHRU
+         */
+        CERTIFIER_OPT_CSR
 
 } CERTIFIER_OPT;
 
 typedef enum {
+    CERTIFIER_OPTION_NONE = 0,
     CERTIFIER_OPTION_DEBUG_HTTP = 1,
     CERTIFIER_OPTION_TRACE_HTTP = 2,
     CERTIFIER_OPTION_FORCE_REGISTRATION = 4,
     CERTIFIER_OPTION_MEASURE_PERFORMANCE = 8,
     CERTIFIER_OPTION_CERTIFICATE_LITE = 16,
-    // 32, 64, 128, 256, 512, 1024 are unused
+    CERTIFIER_OPTION_PASSTHRU = 32,
+    // 64, 128, 256, 512, 1024 are unused
 } CERTIFIER_OPT_OPTION;
 
 /**

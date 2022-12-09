@@ -163,6 +163,7 @@ struct _PropMap {
     char *action;
     char *input_node;
     char *autorenew_certs_path_list;
+    char *csr;
 };
 
 struct bool_opt_entry {
@@ -175,7 +176,8 @@ static struct bool_opt_entry bool_table[] = {
     { CERTIFIER_OPT_TRACE_HTTP,             CERTIFIER_OPTION_TRACE_HTTP },
     { CERTIFIER_OPT_FORCE_REGISTRATION,     CERTIFIER_OPTION_FORCE_REGISTRATION},
     { CERTIFIER_OPT_MEASURE_PERFORMANCE,    CERTIFIER_OPTION_MEASURE_PERFORMANCE },
-    { CERTIFIER_OPT_CERTIFICATE_LITE,       CERTIFIER_OPTION_CERTIFICATE_LITE }
+    { CERTIFIER_OPT_CERTIFICATE_LITE,       CERTIFIER_OPTION_CERTIFICATE_LITE },
+    { CERTIFIER_OPT_PASSTHRU,               CERTIFIER_OPTION_PASSTHRU }
 };
 
 static CERTIFIER_OPT_OPTION find_option(CERTIFIER_OPT name) {
@@ -496,7 +498,8 @@ property_set(CertifierPropMap *prop_map, CERTIFIER_OPT name, const void *value) 
         case CERTIFIER_OPT_TRACE_HTTP:
         case CERTIFIER_OPT_FORCE_REGISTRATION:
         case CERTIFIER_OPT_MEASURE_PERFORMANCE:
-        case CERTIFIER_OPT_CERTIFICATE_LITE: {
+        case CERTIFIER_OPT_CERTIFICATE_LITE:
+        case CERTIFIER_OPT_PASSTHRU: {
             CERTIFIER_OPT_OPTION opt = find_option(name);
 
             if (opt != CERTIFIER_OPTION_NONE) {
@@ -509,6 +512,10 @@ property_set(CertifierPropMap *prop_map, CERTIFIER_OPT name, const void *value) 
 
             break;
         }
+
+        case CERTIFIER_OPT_CSR:
+            SV(prop_map->csr, value);
+            break;
 
         default:
             /* some unknown property type */
@@ -705,7 +712,8 @@ property_get(CertifierPropMap *prop_map, CERTIFIER_OPT name) {
         case CERTIFIER_OPT_TRACE_HTTP:
         case CERTIFIER_OPT_FORCE_REGISTRATION:
         case CERTIFIER_OPT_MEASURE_PERFORMANCE:
-        case CERTIFIER_OPT_CERTIFICATE_LITE: {
+        case CERTIFIER_OPT_CERTIFICATE_LITE:
+        case CERTIFIER_OPT_PASSTHRU: {
             CERTIFIER_OPT_OPTION opt = find_option(name);
 
             if (opt != CERTIFIER_OPTION_NONE)
@@ -717,6 +725,10 @@ property_get(CertifierPropMap *prop_map, CERTIFIER_OPT name) {
 
             break;
         }
+
+        case CERTIFIER_OPT_CSR:
+            retval = prop_map->csr;
+            break;
 
         default:
             log_warn("property_get: unrecognized property [%d]", name);
@@ -1193,4 +1205,5 @@ static void free_prop_map_values(CertifierPropMap *prop_map) {
     FV(prop_map->source);
     FV(prop_map->cn_prefix);
     FV(prop_map->ext_key_usage_value);
+    FV(prop_map->csr);
 }
