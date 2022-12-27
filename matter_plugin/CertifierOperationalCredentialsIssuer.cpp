@@ -251,6 +251,11 @@ CHIP_ERROR CertifierOperationalCredentialsIssuer::ObtainOpCert(const ByteSpan & 
         certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_PROFILE_NAME, const_cast<char *>(mCertifierProfile.c_str()));
     }
 
+    if (!mAuthorizationToken.empty()) {
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_AUTH_TYPE, const_cast<char *>("SAT"));
+        certifier_api_easy_set_opt(certifier, CERTIFIER_OPT_AUTH_TOKEN, const_cast<char *>(mAuthorizationToken.c_str()));
+    }
+
     ChipLogProgress(Controller, "Generating Certificate Request Token");
 
     certifier_api_easy_set_mode(certifier, CERTIFIER_MODE_CREATE_CRT);

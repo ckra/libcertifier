@@ -112,6 +112,16 @@ public:
      */
     CHIP_ERROR SetKeystorePassphrase(const std::string &passphrase);
 
+    /**
+     * @brief Set the xPKI authorization token for NOC chain validation
+     * 
+     * @param token A valid bearer token (e.g., SAT)
+     */
+    void SetAuthToken(const std::string &token)
+    {
+        mAuthorizationToken = token;
+    }
+
 private:
     NodeId mNodeId;
     FabricId mFabricId;
@@ -151,6 +161,8 @@ private:
      * @brief The Matter CA to request certificates from
      */
     std::string mCertifierProfile = "XFN_Matter_OP_Class_3_ICA";
+
+    std::string mAuthorizationToken;
 
     /**
      * @brief Makes a string that represents a number in hex, with leading zeroes.
