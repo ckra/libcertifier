@@ -786,19 +786,25 @@ property_set_defaults(CertifierPropMap *prop_map) {
 
     if (prop_map->ca_info == NULL) {
         const char *default_ca_info = get_default_ca_info();
-        return_code = property_set(prop_map, CERTIFIER_OPT_CA_INFO, default_ca_info);
-        if (return_code != 0) {
-            log_error("Failed to set default property name: CERTIFIER_OPT_CA_INFO with error code: %i", return_code);
-            return return_code;
+
+        if (default_ca_info) {
+            return_code = property_set(prop_map, CERTIFIER_OPT_CA_INFO, default_ca_info);
+            if (return_code != 0) {
+                log_error("Failed to set default property name: CERTIFIER_OPT_CA_INFO with error code: %i", return_code);
+                return return_code;
+            }
         }
     }
 
     if (prop_map->ca_path == NULL) {
         const char *default_ca_path = get_default_ca_path();
-        return_code = property_set(prop_map, CERTIFIER_OPT_CA_PATH, default_ca_path);
-        if (return_code != 0) {
-            log_error("Failed to set default property name: CERTIFIER_OPT_CA_PATH with error code: %i", return_code);
-            return return_code;
+
+        if (default_ca_path) {
+            return_code = property_set(prop_map, CERTIFIER_OPT_CA_PATH, default_ca_path);
+            if (return_code != 0) {
+                log_error("Failed to set default property name: CERTIFIER_OPT_CA_PATH with error code: %i", return_code);
+                return return_code;
+            }
         }
     }
 
