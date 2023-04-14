@@ -122,6 +122,22 @@ public:
         mAuthorizationToken = token;
     }
 
+    /**
+     * @brief Set the fabric IPK for the next NOC chain generation
+     * 
+     * @param active_ipk_span The current IPK for the fabric that is commissioning
+     * @note Be sure to invoke this to synchronize the commissioning fabric's active IPK
+     *       when starting a commissioning session. If the IPK doesn't match the commissioner's
+     *       active IPK, CASE will fail to establish.
+     * @return CHIP_ERROR CHIP_ERROR_INVALID_ARGUMENT if input IPK span is empty
+     */
+    inline CHIP_ERROR SetIPKForNextNOCRequest(const chip::Crypto::AesCcm128KeySpan &active_ipk_span)
+    {
+        mIPK = MakeOptional(chip::Crypto::AesCcm128Key(active_ipk_span));
+
+        return CHIP_NO_ERROR;
+    }
+
 private:
     NodeId mNodeId;
     FabricId mFabricId;
@@ -163,6 +179,8 @@ private:
     std::string mCertifierProfile = "XFN_Matter_OP_Class_3_ICA";
 
     std::string mAuthorizationToken;
+
+    chip::Optional<chip::Crypto::AesCcm128Key> mIPK;
 
     /**
      * @brief Makes a string that represents a number in hex, with leading zeroes.
